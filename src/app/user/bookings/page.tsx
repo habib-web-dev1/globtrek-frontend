@@ -17,11 +17,6 @@ import {
 import api from "@/services/api";
 import ProtectedRoute from "@/components/common/ProtectedRoute";
 import Link from "next/link";
-import dynamic from "next/dynamic";
-
-const PaymentModal = dynamic(() => import("@/components/ui/PaymentModal"), {
-  ssr: false,
-});
 
 type Booking = {
   _id: string;
@@ -64,6 +59,233 @@ const STATUS: Record<
     label: "Cancelled",
   },
 };
+
+function PaymentModal({
+  booking,
+  onSuccess,
+  onClose,
+}: {
+  booking: Booking;
+  onSuccess: () => void;
+  onClose: () => void;
+}) {
+  const [card, setCard] = useState({
+    number: "",
+    expiry: "",
+    cvc: "",
+    name: "",
+  });
+  const [processing, setProcessing] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState(false);
+
+  const formatCard = (v: string) =>
+    v
+      .replace(/\D/g, "")
+      .replace(/(.{4})/g, "$1 ")
+      .trim()
+      .slice(0, 19);
+  const formatExpiry = (v: string) => {
+    const d = v.replace(/\D/g, "");
+    return d.length >= 2 ? d.slice(0, 2) + "/" + d.slice(2, 4) : d;
+  };
+
+  const isComplete =
+    card.number.replace(/\s/g, "").length === 16 &&
+    card.expiry.length === 5 &&
+    card.cvc.length >= 3 &&
+    card.name.trim().length >= 2;
+
+  const handlePay = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isComplete) {
+      setError("Please fill in all card details correctly.");
+      return;
+    }
+    const [mm, yy] = card.expiry.split("/");
+    const expDate = new Date(
+      2000 + parseInt(yy ?? "0"),
+      parseInt(mm ?? "0") - 1,
+    );
+    if (expDate < new Date()) {
+      setError("Card has expired. Please use a valid card.");
+      return;
+    }
+    setProcessing(true);
+    setError("");
+    try {
+      await api.patch(`/bookings/mark-paid/${booking._id}`);
+      setDone(true);
+      setTimeout(() => {
+        onSuccess();
+        onClose();
+      }, 2000);
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { message?: string } } };
+      setError(
+        e?.response?.data?.message || "Payment failed. Please try again.",
+      );
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-8 relative max-h-[90vh] overflow-y-auto">
+        <button
+          onClick={onClose}
+          className="absolute top-5 right-5 p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-all"
+        >
+          <X size={18} />
+        </button>
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+            <CreditCard size={20} className="text-blue-600" />
+          </div>
+          <div>
+            <h2 className="text-xl font-black text-slate-900">
+              Secure Payment
+            </h2>
+            <p className="text-xs text-slate-400 font-medium">Demo checkout</p>
+          </div>
+        </div>
+
+        {done ? (
+          <div className="text-center py-8">
+            <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <CheckCircle size={32} className="text-emerald-600" />
+            </div>
+            <h3 className="text-xl font-black text-slate-900 mb-2">
+              Payment Successful!
+            </h3>
+            <p className="text-slate-500 font-medium text-sm">
+              Your booking is marked as <strong>paid</strong>. Admin will
+              confirm shortly.
+            </p>
+          </div>
+        ) : (
+          <form onSubmit={handlePay} className="space-y-4">
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-4">
+              <p className="text-xs font-black text-blue-400 uppercase tracking-widest mb-1">
+                Paying for
+              </p>
+              <p className="font-black text-slate-900">
+                {booking.itemId?.title || "Destination"}
+              </p>
+              <p className="text-2xl font-black text-blue-600 mt-1">
+                ${booking.totalPrice?.toLocaleString()}
+              </p>
+            </div>
+            <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 flex items-start gap-2">
+              <DollarSign
+                size={13}
+                className="text-amber-600 shrink-0 mt-0.5"
+              />
+              <div className="text-xs text-amber-700">
+                <p className="font-black">Demo Mode — Use test card:</p>
+                <p>
+                  Number:{" "}
+                  <span className="font-black">4242 4242 4242 4242</span> ·
+                  Expiry: <span className="font-black">12/28</span> · CVC:{" "}
+                  <span className="font-black">123</span>
+                </p>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1.5 block">
+                Cardholder Name
+              </label>
+              <input
+                type="text"
+                placeholder="John Doe"
+                value={card.name}
+                onChange={(e) => setCard({ ...card, name: e.target.value })}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1.5 block">
+                Card Number
+              </label>
+              <input
+                type="text"
+                placeholder="4242 4242 4242 4242"
+                value={card.number}
+                onChange={(e) =>
+                  setCard({ ...card, number: formatCard(e.target.value) })
+                }
+                maxLength={19}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all tracking-widest"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1.5 block">
+                  Expiry
+                </label>
+                <input
+                  type="text"
+                  placeholder="MM/YY"
+                  value={card.expiry}
+                  onChange={(e) =>
+                    setCard({ ...card, expiry: formatExpiry(e.target.value) })
+                  }
+                  maxLength={5}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1.5 block">
+                  CVC
+                </label>
+                <input
+                  type="text"
+                  placeholder="123"
+                  value={card.cvc}
+                  onChange={(e) =>
+                    setCard({
+                      ...card,
+                      cvc: e.target.value.replace(/\D/g, "").slice(0, 4),
+                    })
+                  }
+                  maxLength={4}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all"
+                />
+              </div>
+            </div>
+            {error && (
+              <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-sm font-medium">
+                <XCircle size={14} className="shrink-0" /> {error}
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={processing || !isComplete}
+              className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {processing ? (
+                <>
+                  <Loader2 size={18} className="animate-spin" /> Processing...
+                </>
+              ) : (
+                <>
+                  <CreditCard size={16} /> Pay $
+                  {booking.totalPrice?.toLocaleString()}
+                </>
+              )}
+            </button>
+            {!isComplete && (
+              <p className="text-center text-xs text-slate-400 font-medium">
+                Fill in all card details to enable payment
+              </p>
+            )}
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function TicketModal({
   booking,
@@ -211,6 +433,7 @@ function UserBookingsContent() {
       .finally(() => setLoading(false));
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     fetchBookings();
   }, []);
@@ -370,9 +593,7 @@ function UserBookingsContent() {
       {/* Payment Modal */}
       {payingBooking && (
         <PaymentModal
-          amount={payingBooking.totalPrice}
-          bookingId={payingBooking._id}
-          destinationTitle={payingBooking.itemId?.title || "Destination"}
+          booking={payingBooking}
           onSuccess={handlePaymentSuccess}
           onClose={() => setPayingBooking(null)}
         />
